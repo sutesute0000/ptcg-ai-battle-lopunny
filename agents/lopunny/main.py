@@ -214,8 +214,10 @@ class Policy:
             if cid == BUNEARY and self.lopunny_line_on_board() < 3:
                 return 8800
             if cid == DUNSPARCE:
-                # played almost every turn: it feeds the Dudunsparce draw loop
-                # and restocks the sacrificial shields
+                # Feeds the Dudunsparce draw loop and restocks shields, but it
+                # goes down AFTER the attacker line: raising it above Buneary
+                # (which the pilots' play counts appear to suggest) measured
+                # 86.3% -> 79.8% in the gauntlet, mostly from Grimmsnarl.
                 if len(self.bench) < self.me.benchMax:
                     return 8100
                 return 3000
