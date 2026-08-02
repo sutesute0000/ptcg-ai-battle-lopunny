@@ -336,6 +336,11 @@ class Policy:
             return 62 - 20 * (hand.count(DUDUNSPARCE) + self.board_count(DUDUNSPARCE))
         if cid in ENERGY_IDS:
             n_energy = sum(1 for h in hand if h in ENERGY_IDS)
+            # An unfuelled bench Lopunny is the biggest remaining reason an
+            # attack lands for 60, but searching harder for energy does NOT
+            # convert into wins: prioritising it lifted the Alakazam engine
+            # rate 24% -> 41% while that matchup stayed at 28%, and cost ~2pt
+            # weighted overall. The engine metric is necessary, not sufficient.
             base = 70 - 30 * n_energy
             # Enriching refunds itself (draw 4); Spiky punishes the attacker
             base += {ENRICHING: 12, SPIKY: 6}.get(cid, 0)

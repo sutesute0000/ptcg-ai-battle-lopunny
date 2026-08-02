@@ -23,6 +23,7 @@ from cg.api import SelectContext, OptionType  # noqa: E402
 
 LOPUNNY, AIR_BALLOON = 849, 1174
 tally = Counter()
+causes = Counter()
 
 
 def spy(obs_dict, *rest):
@@ -39,14 +40,26 @@ def spy(obs_dict, *rest):
         if o.type == OptionType.ATTACK:
             at = M.ATTACKS.get(o.attackId)
             if at and at.name == 'Gale Thrust':
-                tally['big' if obs.current.retreated else 'weak'] += 1
-        st = obs.current
-        mine = st.players[st.yourIndex]
-        if not st.retreated:
-            fuelled = [p for p in (mine.bench or [])
-                       if p.id == LOPUNNY and p.energies]
-            tally['saw_fuelled_bench'] += bool(fuelled)
-            tally['saw_no_fuelled_bench'] += (not fuelled)
+                st = obs.current
+                if st.retreated:
+                    tally['big'] += 1
+                else:
+                    tally['weak'] += 1
+                    mine = st.players[st.yourIndex]
+                    active = mine.active[0] if mine.active else None
+                    bench = mine.bench or []
+                    fuelled = [p for p in bench if p.id == LOPUNNY and p.energies]
+                    if not fuelled:
+                        has_lop = any(p.id == LOPUNNY for p in bench)
+                        causes['ベンチにミミロップが居ない' if not has_lop
+                               else 'ベンチのミミロップにエネが無い'] += 1
+                    elif active is not None and any(
+                            t.id == AIR_BALLOON for t in (active.tools or [])):
+                        causes['かるいし有りなのに、にげなかった'] += 1
+                    elif active is not None and (active.energies or []):
+                        causes['にげるとエネを捨てることになる'] += 1
+                    else:
+                        causes['にげるコストを払えない'] += 1
     return sel
 
 
@@ -70,3 +83,7 @@ print(f"  Gale Thrust   : 230dmg {big}  /  60dmg {weak}")
 print(f"  ENGINE RATE   : {big/max(1,tot):.1%}   <- higher is better")
 if tally['agent_error']:
     print(f"  agent errors  : {tally['agent_error']}")
+if causes:
+    print("  60ダメージになった理由:")
+    for k, v in causes.most_common():
+        print(f"      {v:>4} ({v/max(1,weak):>4.0%})  {k}")
