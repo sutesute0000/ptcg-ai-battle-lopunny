@@ -241,8 +241,12 @@ class Policy:
             return 5600
         # supporters: only one per turn, so these compete with each other
         if cid == HILDA:
+            # Hilda is the only reliable way to find Mega Lopunny ex (Poké Pad
+            # can't touch a Rule Box card). Half our attacks land for 60
+            # instead of 230 because no second Lopunny is on the bench, so
+            # when the loop has no spare attacker this outranks a blind draw.
             if LOPUNNY not in hand and self.board_count(BUNEARY) > 0:
-                return 6600
+                return 7600 if self.board_count(LOPUNNY) < 2 else 6600
             return 3000
         if cid == LILLIE:
             return 7000 if len(hand) <= 4 else 1200
@@ -286,7 +290,11 @@ class Policy:
         if self.active.id != LOPUNNY:
             return 8850
         if not free and self.active.energies:
-            return 3500
+            # Paying the retreat cost discards this Lopunny's only energy, but
+            # the alternative is attacking for 60 (scored ~5060) instead of
+            # 230. One energy for +170 is worth it while a fuelled attacker
+            # waits on the bench.
+            return 5500
         if self.active.hp < self.active.maxHp or not self.active.energies:
             return 8850
         return 8820
@@ -312,13 +320,18 @@ class Policy:
         card = self.opt_card(o)
         cid = card.id if card is not None else -1
         hand = self.hand_ids
+        # Until a second Lopunny line exists the loop cannot run, so the
+        # attacker outranks the draw engine; after that the ordering flips.
+        need_attacker = self.board_count(LOPUNNY) < 2
+        if cid == LOPUNNY:
+            base = 110 if need_attacker else 86
+            return base - 25 * (hand.count(LOPUNNY) + self.board_count(LOPUNNY))
+        if cid == BUNEARY:
+            base = 100 if need_attacker else 90
+            return base - 25 * (self.lopunny_line_on_board() + hand.count(BUNEARY))
         if cid == DUNSPARCE:
             # doubles as the sacrificial shield and the draw engine's base
             return 92 - 18 * (hand.count(DUNSPARCE) + self.board_count(DUNSPARCE))
-        if cid == BUNEARY:
-            return 90 - 25 * (self.lopunny_line_on_board() + hand.count(BUNEARY))
-        if cid == LOPUNNY:
-            return 86 - 25 * (hand.count(LOPUNNY) + self.board_count(LOPUNNY))
         if cid == DUDUNSPARCE:
             return 62 - 20 * (hand.count(DUDUNSPARCE) + self.board_count(DUDUNSPARCE))
         if cid in ENERGY_IDS:
