@@ -144,7 +144,9 @@ class Policy:
             if cid == FAN_ROTOM:
                 return 8500  # first-turn Fan Call: fetch Buneary
             if cid == DUDUNSPARCE:
-                return 6000  # Run Away Draw
+                # Run Away Draw: free 3 cards, then it shuffles itself back —
+                # the deck's main engine, used every turn by the top pilot.
+                return 8200
             return 500
         if t == OptionType.ATTACH:
             src = self.opt_card(o)  # the card in hand (energy or tool)
@@ -154,11 +156,18 @@ class Policy:
             src_id = src.id if src is not None else -1
             is_active_tgt = o.inPlayArea == AreaType.ACTIVE
             if src_id == AIR_BALLOON:
-                # free retreat is the engine of the hit-and-run loop
+                # Free retreat is the engine of the loop: without it, retreating
+                # discards the attacker's energy. Tools survive evolution, so a
+                # Balloon on Buneary carries over to Mega Lopunny ex.
+                if tgt.tools:
+                    return 100  # already has a tool
                 if tgt.id == LOPUNNY:
                     return 8700 if is_active_tgt else 7400
                 if tgt.id == BUNEARY:
-                    return 6800
+                    return 5000
+                if tgt.id in (DUNSPARCE, DUDUNSPARCE):
+                    # shield bodies must be able to flee after they are promoted
+                    return 5200 if not tgt.energies else 3800
                 return 300
             # energy: fuel the NEXT attacker — a benched Lopunny line without
             # energy — so we can retreat-promote and hit 230 every turn
@@ -196,9 +205,14 @@ class Policy:
     def play_score(self, cid) -> float:
         hand = self.hand_ids
         if cid in BASIC_POKE:
-            # bench bodies early; keep at least 2 Lopunny lines going
             if cid == BUNEARY and self.lopunny_line_on_board() < 3:
                 return 8800
+            if cid == DUNSPARCE:
+                # played almost every turn: it feeds the Dudunsparce draw loop
+                # and restocks the sacrificial shields
+                if len(self.bench) < self.me.benchMax:
+                    return 8100
+                return 3000
             if len(self.bench) < 3:
                 return 7800
             return 3000
@@ -209,24 +223,33 @@ class Policy:
         if cid == AIR_BALLOON:
             return 7200  # free retreat enables the hit-and-run loop
         if cid == ULTRA_BALL:
-            if LOPUNNY not in hand and self.board_count(BUNEARY) > 0 and len(hand) >= 3:
-                return 7600
+            # costs two cards from hand — only worth it to find a missing piece
+            if LOPUNNY not in hand and self.board_count(BUNEARY) > 0 and len(hand) >= 4:
+                return 6200
             return 900
         if cid == POKE_PAD:
             return 5200
         if cid == POKEGEAR:
             return 5600
-        # supporters: engine only offers when legal (one per turn)
+        # supporters: only one per turn, so these compete with each other
         if cid == HILDA:
             if LOPUNNY not in hand and self.board_count(BUNEARY) > 0:
-                return 7900
-            return 4200
+                return 6600
+            return 3000
         if cid == LILLIE:
             return 7000 if len(hand) <= 4 else 1200
         if cid == WALLY:
+            # heal the Mega back to 330 and recycle its energy to hand — the
+            # top pilot's most-played supporter, so don't hold out for a
+            # near-death Lopunny.
             worst = self.most_damaged_mega()
-            if worst is not None and (worst.maxHp - worst.hp) >= 150 and not self.st.energyAttached:
+            if worst is None:
+                return -200
+            dmg = worst.maxHp - worst.hp
+            if dmg >= 150:
                 return 8700
+            if dmg >= 80:
+                return 6800
             return -200
         if cid == BOSS:
             return 4000
@@ -249,13 +272,16 @@ class Policy:
         cost_ok = free or len(self.active.energies or []) >= 1
         if not cost_ok:
             return -900
-        # swap out a non-attacker or a damaged/spent Lopunny for a fresh one
+        # Paid retreat discards energy equal to the retreat cost. On a shield
+        # body that is a fine price for the 230 swing; on a fuelled Lopunny it
+        # throws away the very energy that makes it an attacker.
         if self.active.id != LOPUNNY:
             return 8850
+        if not free and self.active.energies:
+            return 3500
         if self.active.hp < self.active.maxHp or not self.active.energies:
             return 8850
-        # healthy fueled Lopunny already active: still worth the +170 bonus
-        return 8820 if free else 4800
+        return 8820
 
     def attack_score(self, o) -> float:
         atk = ATTACKS.get(o.attackId)
@@ -272,59 +298,117 @@ class Policy:
 
     # --- card-pick contexts --------------------------------------------
     def to_hand_rank(self, o) -> float:
+        """Search targets. Dudunsparce is the repeatable draw engine (play
+        Dunsparce -> evolve -> Run Away Draw -> it shuffles itself back), so
+        the top pilot fetches it about as often as the attacker line."""
         card = self.opt_card(o)
         cid = card.id if card is not None else -1
         hand = self.hand_ids
-        if cid == LOPUNNY:
-            return 100 - 20 * hand.count(LOPUNNY)
+        if cid == DUNSPARCE:
+            # doubles as the sacrificial shield and the draw engine's base
+            return 92 - 18 * (hand.count(DUNSPARCE) + self.board_count(DUNSPARCE))
         if cid == BUNEARY:
             return 90 - 25 * (self.lopunny_line_on_board() + hand.count(BUNEARY))
+        if cid == LOPUNNY:
+            return 86 - 25 * (hand.count(LOPUNNY) + self.board_count(LOPUNNY))
+        if cid == DUDUNSPARCE:
+            return 62 - 20 * (hand.count(DUDUNSPARCE) + self.board_count(DUDUNSPARCE))
         if cid in ENERGY_IDS:
             n_energy = sum(1 for h in hand if h in ENERGY_IDS)
             base = 70 - 30 * n_energy
-            return base + (5 if cid == MIST else 0)
-        if cid == DUNSPARCE:
-            return 55 - 20 * hand.count(DUNSPARCE)
-        if cid == DUDUNSPARCE:
-            return 50 - 15 * hand.count(DUDUNSPARCE)
-        if cid in (HILDA, LILLIE, BOSS):
-            return 45
-        if cid == FAN_ROTOM:
+            # Enriching refunds itself (draw 4); Spiky punishes the attacker
+            base += {ENRICHING: 12, SPIKY: 6}.get(cid, 0)
+            return base
+        if cid == WALLY:
+            worst = self.most_damaged_mega()
+            return 60 if worst is not None else 35
+        if cid == AIR_BALLOON:
+            return 50
+        if cid in (HILDA, LILLIE):
+            return 40
+        if cid == BOSS:
             return 30
+        if cid == FAN_ROTOM:
+            return 25 if self.st.turn <= 2 else 5
         return 20
 
     def discard_rank(self, o) -> float:
-        """Higher = more willing to discard."""
+        """Higher = more willing to discard.
+
+        Supporters are the expendable resource: only one can be played per
+        turn and the deck runs 4 copies of each, so a second Hilda/Lillie in
+        hand is dead weight. The item engine (Poffin/Ultra Ball/Pokégear/Poké
+        Pad) and Air Balloon are what keep the loop running, so they stay.
+        """
         card = self.opt_card(o)
         cid = card.id if card is not None else -1
-        keep = {LOPUNNY: -100, WALLY: -40, BOSS: -35, HILDA: -30, LILLIE: -25}
-        if cid in keep:
-            n = self.hand_ids.count(cid)
-            return keep[cid] + 10 * max(0, n - 1)
-        if cid in ENERGY_IDS:
-            n_energy = sum(1 for h in self.hand_ids if h in ENERGY_IDS)
-            return 50 if n_energy >= 3 else -10
-        if cid in (POKEGEAR, POKE_PAD, XEROSIC):
-            return 40
-        if cid in (POFFIN, ULTRA_BALL, AIR_BALLOON):
-            return 20
-        if cid in BASIC_POKE:
-            return 5
-        return 10
+        dup = max(0, self.hand_ids.count(cid) - 1)
 
-    def promote_rank(self, o) -> float:
+        if cid == LOPUNNY:
+            return -100
+        if cid == AIR_BALLOON:
+            spare = self.hand_ids.count(AIR_BALLOON) + sum(
+                1 for p in [self.active] + list(self.bench)
+                if p is not None and any(t.id == AIR_BALLOON for t in (p.tools or [])))
+            return -60 if spare <= 2 else 15
+        if cid == BUNEARY:
+            return -40 if self.lopunny_line_on_board() < 3 else 5
+        if cid in ENERGY_IDS:
+            # Each attacker needs exactly one energy and Wally's Compassion
+            # returns it to hand, so spare energy is the cheapest thing to pitch.
+            n_energy = sum(1 for h in self.hand_ids if h in ENERGY_IDS)
+            if n_energy >= 2:
+                return 60 - (15 if cid == ENRICHING else 0)
+            return -20
+        if cid == LILLIE:
+            return 42 + 12 * dup
+        if cid in (HILDA, BOSS, WALLY, XEROSIC):
+            return 33 + 12 * dup
+        if cid == FAN_ROTOM:
+            return 45 if self.st.turn > 2 else -30  # Fan Call is first-turn only
+        if cid in (POKEGEAR, POKE_PAD, POFFIN, ULTRA_BALL):
+            return 28 + 12 * dup
+        if cid in (DUNSPARCE, DUDUNSPARCE):
+            return 20
+        return 15
+
+    def switch_rank(self, o) -> float:
+        """Retreat destination, chosen during OUR turn: this is the Pokémon
+        that "moved from the Bench to the Active Spot this turn", so it must
+        be a fuelled Mega Lopunny ex to collect Gale Thrust's +170."""
         p = self.opt_card(o)
         if p is None:
             return 0
         if p.id == LOPUNNY:
-            return 100 + (50 if p.energies else 0) + p.hp / 10
-        if p.id == DUDUNSPARCE:
-            return 80  # 140HP speed bump that recycles itself
-        if p.id == DUNSPARCE:
-            return 40
+            return 200 + (80 if p.energies else 0) + p.hp / 10
         if p.id == BUNEARY:
-            return 35
-        return 30 + p.hp / 10
+            return 60 + (20 if p.energies else 0)
+        return {DUDUNSPARCE: 50, DUNSPARCE: 45, FAN_ROTOM: 30}.get(p.id, 25) + p.hp / 20
+
+    def shield_rank(self, o) -> float:
+        """Replace a knocked-out Active (forced promotion between turns).
+
+        Promoting Lopunny here WASTES its attack: Gale Thrust only gets +170
+        when the attacker moves bench->active during our own turn, and a
+        Pokémon promoted after a KO is already Active when the turn starts.
+        Sending up a cheap body instead keeps the 230 loop intact (retreat it,
+        promote a fuelled Lopunny, attack) and costs 1 prize instead of 3.
+        """
+        p = self.opt_card(o)
+        if p is None:
+            return 0
+        can_flee = (any(t.id == AIR_BALLOON for t in (p.tools or []))
+                    or len(p.energies or []) >= 1)
+        if p.id == LOPUNNY:
+            # An unfuelled Lopunny promoted here is a 3-prize wall that cannot
+            # attack: the top pilot did this once in 57 promotions. A fuelled
+            # one is only worth promoting when a second fuelled Lopunny stays
+            # behind to run the retreat loop next turn.
+            if not p.energies:
+                return 5
+            return 150 if len(self.fueled_bench_lopunny()) >= 2 else 30
+        base = {DUNSPARCE: 100, FAN_ROTOM: 60, DUDUNSPARCE: 55, BUNEARY: 40}.get(p.id, 50)
+        return base + (40 if can_flee else 0) + p.hp / 20
 
     def setup_rank(self, o) -> float:
         c = self.opt_card(o)
@@ -352,8 +436,9 @@ class Policy:
         n = len(opts)
 
         if ctx == SelectContext.IS_FIRST:
-            # go second: attack from turn 1
-            want = OptionType.NO
+            # go FIRST: the deck wins by setting up two fuelled Lopunny lines
+            # before it ever needs to attack (top pilot: 14/14 games first).
+            want = OptionType.YES
             return [next((i for i, o in enumerate(opts) if o.type == want), 0)]
         if ctx == SelectContext.MULLIGAN:
             has_basic = any(c in BASIC_POKE for c in self.hand_ids)
@@ -364,8 +449,8 @@ class Policy:
             SelectContext.MAIN: self.score_main,
             SelectContext.SETUP_ACTIVE_POKEMON: self.setup_rank,
             SelectContext.SETUP_BENCH_POKEMON: self.setup_rank,
-            SelectContext.SWITCH: self.promote_rank,
-            SelectContext.TO_ACTIVE: self.promote_rank,
+            SelectContext.SWITCH: self.switch_rank,
+            SelectContext.TO_ACTIVE: self.shield_rank,
             SelectContext.TO_BENCH: self.setup_rank,
             SelectContext.TO_HAND: self.to_hand_rank,
             SelectContext.DISCARD: self.discard_rank,

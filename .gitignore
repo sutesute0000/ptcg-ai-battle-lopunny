@@ -8,3 +8,5 @@ __pycache__/
 reference/ptcg-abc/
 agents/*/cg/
 agents/*/submission.tar.gz
+agents/_frozen_v0/
+agents/_opp/

@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(.venv/bin/python tools/make_opponents.py /private/tmp/claude-501/-Users-mietakao-20260802-pokemon-agent/dde7151c-9a45-4c5a-8e85-1a0988bbe25b/scratchpad/ep0801/pokemon-tcg-ai-battle-episodes-2026-08-01.zip --min-games 30)",
+      "Bash(.venv/bin/python tools/eval_local.py agents/lopunny agents/_opp/marnie_s_grimmsnarl_ex 8)",
+      "Bash(.venv/bin/python tools/gauntlet.py agents/lopunny 40)",
+      "Bash(.venv/bin/python tools/gauntlet.py agents/_frozen_v0 40)"
     ]
   }
 }
