@@ -125,6 +125,12 @@ class Policy:
     def lopunny_line_on_board(self):
         return self.board_count(BUNEARY) + self.board_count(LOPUNNY)
 
+    def facing_mirror(self):
+        opp_board = list(self.opp.bench or [])
+        if self.opp.active:
+            opp_board += [p for p in self.opp.active if p is not None]
+        return any(p.id in (LOPUNNY, BUNEARY) for p in opp_board)
+
     def opt_card(self, o):
         return get_card(self.obs, o.area, o.index, o.playerIndex)
 
@@ -401,12 +407,16 @@ class Policy:
                     or len(p.energies or []) >= 1)
         if p.id == LOPUNNY:
             # An unfuelled Lopunny promoted here is a 3-prize wall that cannot
-            # attack: the top pilot did this once in 57 promotions. A fuelled
-            # one is only worth promoting when a second fuelled Lopunny stays
-            # behind to run the retreat loop next turn.
+            # attack: top pilots did this once in 57 promotions. A fuelled one,
+            # though, is the right answer against everything except the mirror
+            # — measured over decisions where both a fuelled Lopunny AND a
+            # cheap body were available, they promoted the Lopunny 68-100% of
+            # the time (Grimmsnarl 75%, Kangaskhan 75%, Ogerpon 68%), and only
+            # 51% in the mirror, where the opponent can actually punch through
+            # 330 HP and a 3-prize gift decides the game.
             if not p.energies:
                 return 5
-            return 150 if len(self.fueled_bench_lopunny()) >= 2 else 30
+            return 120 if self.facing_mirror() else 200
         base = {DUNSPARCE: 100, FAN_ROTOM: 60, DUDUNSPARCE: 55, BUNEARY: 40}.get(p.id, 50)
         return base + (40 if can_flee else 0) + p.hp / 20
 

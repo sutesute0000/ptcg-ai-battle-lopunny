@@ -84,6 +84,7 @@ def main():
     ap.add_argument('zip'); ap.add_argument('agent_dir')
     ap.add_argument('--player', default=None)
     ap.add_argument('--arch', default=None)
+    ap.add_argument('--opp-arch', default=None, help='only games against this archetype')
     ap.add_argument('--context', default=None)
     ap.add_argument('--max-games', type=int, default=60)
     ap.add_argument('--show', type=int, default=10)
@@ -113,6 +114,8 @@ def main():
                 continue
             decks = [d['steps'][1][0]['action'], d['steps'][1][1]['action']]
             if a.arch and str(ma.dk(decks[win])) != a.arch:
+                continue
+            if a.opp_arch and str(ma.dk(decks[1 - win])) != a.opp_arch:
                 continue
             games += 1
             steps = d['steps']
