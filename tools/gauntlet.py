@@ -13,13 +13,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 agent_dir = os.path.abspath(sys.argv[1])
 per = int(sys.argv[2]) if len(sys.argv) > 2 else 30
 
-# top-tier field share on 2026-08-01 (Elo>=1100 slice)
+# Top-tier field share on 2026-08-01 (Elo>=1100 slice).
+# `*_strong` dirs are bespoke pilots lifted from the reference repo; the rest are
+# GenericPolicy, which is far weaker than a real ladder agent. The difference is
+# not cosmetic: GenericPolicy Alakazam reads as a 55% matchup for us, the bespoke
+# one reads 33% — and the real ladder says 35%. Prefer a bespoke pilot whenever
+# one exists, and treat a GenericPolicy result as an upper bound.
 FIELD = {
     'marnie_s_grimmsnarl_ex': 0.390,
     'teal_mask_ogerpon_ex': 0.236,
     'mega_lopunny_ex': 0.219,
     'mega_kangaskhan_ex': 0.089,
-    'alakazam': 0.041,
+    'alakazam_strong': 0.041,
     'team_rocket_s_mewtwo_ex': 0.016,
 }
 
