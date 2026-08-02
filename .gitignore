@@ -6,3 +6,5 @@ docs/official/
 __pycache__/
 .DS_Store
 reference/ptcg-abc/
+agents/*/cg/
+agents/*/submission.tar.gz
