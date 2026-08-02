@@ -1,0 +1,8 @@
+.venv/
+docs/official/
+**/cg/
+*.tar.gz
+.kaggle*/
+__pycache__/
+.DS_Store
+reference/ptcg-abc/
