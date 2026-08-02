@@ -12,7 +12,7 @@ import os
 
 from cg.api import (
     AreaType, Observation, OptionType, SelectContext, all_attack,
-    to_observation_class,
+    all_card_data, to_observation_class,
 )
 
 # --- our deck's card ids ---
@@ -39,6 +39,43 @@ ENERGY_IDS = {MIST, ENRICHING, SPIKY}
 BASIC_POKE = {BUNEARY, DUNSPARCE, FAN_ROTOM}
 
 ATTACKS = {a.attackId: a for a in all_attack()}
+
+# Pokémon whose attack deals no damage but places damage counters instead.
+# That is an *effect*, and Mist Energy prevents all effects of the opponent's
+# attacks on its holder — so a Lopunny carrying Mist is simply immune to them.
+# Alakazam's Powerful Hand (2 counters per card in the attacker's hand, i.e.
+# 300+) is the meta example.
+def _build_effect_damage_ids():
+    cards = all_card_data()
+    ids = {
+        c.cardId
+        for c in cards
+        if c.hp and any(
+            ATTACKS.get(aid) is not None
+            and not (ATTACKS[aid].damage or 0)
+            and 'damage counter' in (ATTACKS[aid].text or '').lower()
+            for aid in (c.attacks or [])
+        )
+    }
+    # Include the pre-evolutions: an Abra on the bench already tells us an
+    # Alakazam is coming, and the energy we attach now is what will be holding
+    # the line by then.
+    by_name = {}
+    for c in cards:
+        if c.hp:
+            by_name.setdefault(c.name, []).append(c.cardId)
+    for _ in range(2):  # Stage 2 lines are at most two steps back
+        for c in cards:
+            if c.cardId in ids or not c.hp:
+                continue
+            evolves_into = [d for d in cards
+                            if d.cardId in ids and d.evolvesFrom == c.name]
+            if evolves_into:
+                ids.add(c.cardId)
+    return ids
+
+
+EFFECT_DAMAGE_IDS = _build_effect_damage_ids()
 
 
 def _agent_dir() -> str | None:
@@ -125,11 +162,19 @@ class Policy:
     def lopunny_line_on_board(self):
         return self.board_count(BUNEARY) + self.board_count(LOPUNNY)
 
-    def facing_mirror(self):
-        opp_board = list(self.opp.bench or [])
+    def opp_board(self):
+        board = list(self.opp.bench or [])
         if self.opp.active:
-            opp_board += [p for p in self.opp.active if p is not None]
-        return any(p.id in (LOPUNNY, BUNEARY) for p in opp_board)
+            board += [p for p in self.opp.active if p is not None]
+        return board
+
+    def facing_mirror(self):
+        return any(p.id in (LOPUNNY, BUNEARY) for p in self.opp_board())
+
+    def facing_effect_damage(self):
+        """Opponent fields an attacker that places damage counters instead of
+        dealing damage — the thing Mist Energy shuts off completely."""
+        return any(p.id in EFFECT_DAMAGE_IDS for p in self.opp_board())
 
     def opt_card(self, o):
         return get_card(self.obs, o.area, o.index, o.playerIndex)
@@ -193,8 +238,23 @@ class Policy:
                 s = 150
             if src_id == ENRICHING:
                 s += 220  # attaching Enriching draws 4
-            if src_id == MIST and is_active_tgt:
-                s += 60  # attack-effect protection is best on the active
+            if src_id == MIST:
+                # Every Lopunny we fuel is the one that will be Active when the
+                # opponent swings back, so against an effect-damage attacker
+                # Mist goes on it. Verified in-engine: while Mist is attached,
+                # Powerful Hand places no counters at all.
+                #
+                # This does NOT rescue the Alakazam matchup (28% -> 30% over
+                # 150 games) and it was never going to: their whole deck is
+                # single-prize while our attacker is worth 3, so they need two
+                # knockouts to our six. Blanking some of their attacks cannot
+                # close a 3x prize deficit — that is a deck problem, not a
+                # piloting one. Kept because it is gated to this matchup and
+                # blanking a 300-damage attack cannot be worse than not.
+                if tgt.id in (LOPUNNY, BUNEARY) and self.facing_effect_damage():
+                    s += 900
+                elif is_active_tgt:
+                    s += 60
             return s
         if t == OptionType.PLAY:
             card = self.opt_card(o)
