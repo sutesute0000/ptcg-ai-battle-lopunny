@@ -19,13 +19,19 @@ per = int(sys.argv[2]) if len(sys.argv) > 2 else 30
 # not cosmetic: GenericPolicy Alakazam reads as a 55% matchup for us, the bespoke
 # one reads 33% — and the real ladder says 35%. Prefer a bespoke pilot whenever
 # one exists, and treat a GenericPolicy result as an upper bound.
+# Shares are from 2026-08-02, Elo>=1100. Refresh them: between 08-01 and 08-02
+# Ogerpon fell 23.6%->13.2% while Mega Lucario went 0.1%->4.1%, and a field
+# list that omits the decks currently beating us reads far too high.
 FIELD = {
-    'marnie_s_grimmsnarl_ex': 0.390,
-    'teal_mask_ogerpon_ex': 0.236,
-    'mega_lopunny_ex': 0.219,
-    'mega_kangaskhan_ex': 0.089,
-    'alakazam_strong': 0.041,
-    'team_rocket_s_mewtwo_ex': 0.016,
+    'marnie_s_grimmsnarl_ex': 0.395,
+    'mega_lopunny_ex': 0.158,
+    'teal_mask_ogerpon_ex': 0.132,
+    'mega_kangaskhan_ex': 0.116,
+    'alakazam_strong': 0.077,
+    'cynthia_s_garchomp_ex': 0.044,     # Fighting — hits our x2 weakness
+    'mega_lucario_ex': 0.041,           # Fighting, 75% WR, the fastest riser
+    'dragapult_strong': 0.027,          # bespoke pilot, not GenericPolicy
+    'team_rocket_s_mewtwo_ex': 0.009,
 }
 
 from kaggle_environments import make  # noqa: E402
