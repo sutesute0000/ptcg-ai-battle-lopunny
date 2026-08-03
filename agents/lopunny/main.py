@@ -10,9 +10,12 @@ error a legal fallback is returned so the agent never crashes.
 """
 import os
 
+import time
+from collections import Counter
+
 from cg.api import (
     AreaType, Observation, OptionType, SelectContext, all_attack,
-    all_card_data, to_observation_class,
+    all_card_data, search_begin, search_end, search_step, to_observation_class,
 )
 
 # --- our deck's card ids ---
@@ -135,6 +138,15 @@ def get_card(obs, area, index, player_index):
     if area == AreaType.LOOKING:
         return safe(getattr(obs.current, "looking", None), index)
     return None
+
+
+# --- lookahead budget ------------------------------------------------------
+# One game allows 10 minutes of thinking and running out loses instantly, so
+# spend at most a third of it on search and fall back to static scoring after
+# that. _IN_ROLLOUT stops the rollout's own decisions from recursing.
+TIME_BUDGET_S = 200.0
+_spent = [0.0]
+_IN_ROLLOUT = [False]
 
 
 class Policy:
@@ -519,11 +531,163 @@ class Policy:
         return (p.maxHp - p.hp) if p.hp < p.maxHp else 0
 
     # --- dispatch -------------------------------------------------------
+    # --- forward search -------------------------------------------------
+    def _unseen_own_cards(self):
+        """Our 60 minus everything we can see = what is still in deck+prizes.
+
+        The simulator draws from whatever deck we hand it, so a placeholder
+        would make every simulated draw a lie."""
+        seen = Counter()
+        p = self.me
+        for c in (p.hand or []):
+            seen[c.id] += 1
+        for c in (p.discard or []):
+            seen[c.id] += 1
+        for c in (p.prize or []):
+            if c is not None:
+                seen[c.id] += 1
+        for poke in [x for x in (p.active or []) if x is not None] + list(p.bench or []):
+            seen[poke.id] += 1
+            for c in ((poke.energyCards or []) + (poke.tools or [])
+                      + (poke.preEvolution or [])):
+                seen[c.id] += 1
+        for c in (getattr(self.st, 'stadium', None) or []):
+            if c is not None:
+                seen[c.id] += 1
+        rest = []
+        for cid, n in Counter(read_deck_csv()).items():
+            rest += [cid] * max(0, n - seen[cid])
+        return rest
+
+    @staticmethod
+    def _board(pl):
+        return ([x for x in (pl.active or []) if x is not None] + list(pl.bench or []))
+
+    def _turn_value(self, end_state) -> float:
+        """Score the board as our turn hands over to the opponent."""
+        a = end_state.observation.current
+        if a is None:
+            return -1e9
+        am, ao = a.players[self.me_i], a.players[1 - self.me_i]
+
+        before = {p.serial: p for p in self._board(self.opp)}
+        after = {p.serial: p for p in self._board(ao)}
+
+        # A knocked-out Pokémon LEAVES the board, taking its accumulated damage
+        # with it. Scoring raw board damage therefore punishes the knockout we
+        # were aiming for, so count the kills explicitly and only diff the HP
+        # of the Pokémon that are still standing.
+        kos = sum(1 for s in before if s not in after)
+        chip = sum(before[s].hp - after[s].hp for s in before if s in after)
+
+        v = 60000.0 * kos
+        v += 100000.0 * (len(self.me.prize) - len(am.prize))
+        v += 10.0 * chip
+        # a fuelled Lopunny waiting on the bench is next turn's 230
+        v += 300.0 * len([p for p in (am.bench or [])
+                          if p.id == LOPUNNY and p.energies])
+        act = am.active[0] if am.active else None
+        if act is not None:
+            v += 2.0 * act.hp + (400.0 if act.id == LOPUNNY else 0.0)
+        v += 15.0 * am.handCount
+        # losing our own bodies is the mirror of the above
+        my_before = {p.serial for p in self._board(self.me)}
+        my_after = {p.serial for p in self._board(am)}
+        v -= 40000.0 * len(my_before - my_after)
+        return v
+
+    def _rollout(self, i, rest, need):
+        """Take option i, then finish the turn with the static policy."""
+        s = search_begin(
+            self.obs,
+            your_deck=rest[:self.me.deckCount],
+            your_prize=rest[self.me.deckCount:need],
+            opponent_deck=[1] * self.opp.deckCount,
+            opponent_prize=[1] * len(self.opp.prize),
+            opponent_hand=[1] * self.opp.handCount,
+            opponent_active=[],
+        )
+        cur = search_step(s.searchId, [i])
+        for _ in range(40):
+            o = cur.observation
+            if o.select is None or o.current is None:
+                break
+            if o.current.result != -1:
+                break
+            if o.current.yourIndex != self.me_i:
+                break                        # our turn is over
+            cur = search_step(cur.searchId, Policy(o).choose())
+        return cur
+
+    def _lookahead_main(self, opts, static_best):
+        """Use the simulator only for what it judges without ambiguity: which
+        first actions actually end the turn with a knockout.
+
+        Ranking whole turns by a hand-written board score was tried first and
+        lost badly to plain static scoring (88% -> 40% vs Grimmsnarl): the
+        scores are tuned against real top-pilot play, and a crude end-of-turn
+        heuristic is not qualified to overrule them. Verifying a kill, though,
+        is not a judgement call — so the rollout only gets to speak when it
+        finds a knockout the static choice misses.
+        """
+        rest = self._unseen_own_cards()
+        need = self.me.deckCount + len(self.me.prize)
+        if len(rest) < need:
+            return None                      # deduction failed; do not guess
+        _IN_ROLLOUT[0] = True
+        try:
+            if self._rollout_kos(static_best, rest, need):
+                return None                  # static line already kills
+            for i in range(len(opts)):
+                if i == static_best:
+                    continue
+                if self._rollout_kos(i, rest, need):
+                    return [i]
+        finally:
+            _IN_ROLLOUT[0] = False
+            try:
+                search_end()
+            except Exception:
+                pass
+        return None
+
+    def _rollout_kos(self, i, rest, need) -> bool:
+        """Does taking option i end our turn having knocked something out?"""
+        try:
+            end = self._rollout(i, rest, need)
+        except Exception:
+            return False
+        a = end.observation.current
+        if a is None:
+            return False
+        am, ao = a.players[self.me_i], a.players[1 - self.me_i]
+        before = {p.serial for p in self._board(self.opp)}
+        after = {p.serial for p in self._board(ao)}
+        took_prize = len(am.prize) < len(self.me.prize)
+        # ...without trading one of ours away. A Pokémon leaving our board is
+        # NOT proof of that — Dudunsparce's Run Away Draw shuffles itself back
+        # into the deck every turn. The opponent taking a prize is.
+        gave_prize = len(ao.prize) < len(self.opp.prize)
+        return bool((before - after or took_prize) and not gave_prize)
+
     def choose(self) -> list[int]:
         sel = self.obs.select
         ctx = sel.context
         opts = sel.option
         n = len(opts)
+
+        if (ctx == SelectContext.MAIN and n > 1 and not _IN_ROLLOUT[0]
+                and getattr(self.obs, 'search_begin_input', None)
+                and _spent[0] < TIME_BUDGET_S):
+            static_best = max(range(n), key=lambda i: self.score_main(opts[i]))
+            t0 = time.time()
+            try:
+                picked = self._lookahead_main(opts, static_best)
+            except Exception:
+                picked = None
+            _spent[0] += time.time() - t0
+            if picked is not None:
+                return picked
 
         if ctx == SelectContext.IS_FIRST:
             # go FIRST: the deck wins by setting up two fuelled Lopunny lines
