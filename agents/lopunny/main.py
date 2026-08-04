@@ -140,11 +140,58 @@ def get_card(obs, area, index, player_index):
     return None
 
 
+# --- learned position evaluation -------------------------------------------
+# Fitted by tools/train_eval.py on 400 real Mega Lopunny games from the
+# 2026-08-03 ladder: board features -> did this player go on to win.
+# Test accuracy 0.707 against a 0.593 majority-class baseline.
+#
+# Hand-written weights are what sank the first lookahead attempt (88% -> 40%),
+# so these are measured rather than guessed. Note the third-largest positive
+# term is our own fuelled-attacker count — the engine thesis, confirmed from
+# data we did not label ourselves.
+EVAL_W = [1.9558, -0.1514, 0.3810, 0.4566, -0.5502, 0.6255,
+          -0.8267, 0.5977, -0.5509, 0.6553, -0.0458, 0.0768]
+EVAL_B = 0.1649
+
+
+def eval_features(state, mi):
+    """Must stay identical to tools/train_eval.py:features()."""
+    me, opp = state.players[mi], state.players[1 - mi]
+
+    def board(pl):
+        return [x for x in (pl.active or []) if x is not None] + list(pl.bench or [])
+
+    mb, ob = board(me), board(opp)
+    ma_ = me.active[0] if me.active else None
+    oa = opp.active[0] if opp.active else None
+    return [
+        (len(opp.prize) - len(me.prize)) / 6.0,
+        sum(max(0, p.maxHp - p.hp) for p in mb) / 500.0,
+        sum(max(0, p.maxHp - p.hp) for p in ob) / 500.0,
+        (ma_.hp / 350.0) if ma_ is not None else 0.0,
+        (oa.hp / 350.0) if oa is not None else 0.0,
+        len(me.bench or []) / 5.0,
+        len(opp.bench or []) / 5.0,
+        me.handCount / 15.0,
+        opp.handCount / 15.0,
+        len([p for p in mb if p.id in (LOPUNNY, BUNEARY) and p.energies]) / 3.0,
+        me.deckCount / 40.0,
+        min(state.turn or 0, 40) / 40.0,
+    ]
+
+
+def position_value(state, mi) -> float:
+    """Learned win-probability logit for `mi` in `state`."""
+    x = eval_features(state, mi)
+    return EVAL_B + sum(w * xi for w, xi in zip(EVAL_W, x))
+
+
 # --- lookahead budget ------------------------------------------------------
 # One game allows 10 minutes of thinking and running out loses instantly, so
 # spend at most a third of it on search and fall back to static scoring after
 # that. _IN_ROLLOUT stops the rollout's own decisions from recursing.
 TIME_BUDGET_S = 200.0
+LEARNED_MARGIN = 0.25
 _spent = [0.0]
 _IN_ROLLOUT = [False]
 
@@ -473,10 +520,18 @@ class Policy:
     def switch_rank(self, o) -> float:
         """Retreat destination, chosen during OUR turn: this is the Pokémon
         that "moved from the Bench to the Active Spot this turn", so it must
-        be a fuelled Mega Lopunny ex to collect Gale Thrust's +170."""
+        be a fuelled Mega Lopunny ex to collect Gale Thrust's +170.
+
+        The same context also carries Boss's Orders, where the options are the
+        OPPONENT's benched Pokémon and the goal is the opposite — drag up the
+        one we can actually knock out. Ranking those by "is it a Lopunny" fell
+        through to `25 + hp/20`, i.e. we were reliably gusting up their
+        HEALTHIEST Pokémon."""
         p = self.opt_card(o)
         if p is None:
             return 0
+        if o.playerIndex is not None and o.playerIndex != self.me_i:
+            return self.opp_target_rank(o)
         if p.id == LOPUNNY:
             return 200 + (80 if p.energies else 0) + p.hp / 10
         if p.id == BUNEARY:
@@ -636,13 +691,28 @@ class Policy:
             return None                      # deduction failed; do not guess
         _IN_ROLLOUT[0] = True
         try:
-            if self._rollout_kos(static_best, rest, need):
-                return None                  # static line already kills
+            kills, values = [], {}
             for i in range(len(opts)):
-                if i == static_best:
+                try:
+                    end = self._rollout(i, rest, need)
+                except Exception:
                     continue
-                if self._rollout_kos(i, rest, need):
-                    return [i]
+                if self._is_ko(end):
+                    kills.append(i)
+                a = end.observation.current
+                if a is not None:
+                    values[i] = position_value(a, self.me_i)
+            if static_best in kills or not kills:
+                # No kill to rescue; rank by the learned evaluation instead,
+                # but only override the tuned static pick when the margin is
+                # real — a 0.707-accuracy model is not worth a coin-flip veto.
+                if values:
+                    best = max(values, key=values.get)
+                    if (best != static_best and static_best in values
+                            and values[best] - values[static_best] > LEARNED_MARGIN):
+                        return [best]
+                return None
+            return [max(kills, key=lambda i: values.get(i, float('-inf')))]
         finally:
             _IN_ROLLOUT[0] = False
             try:
@@ -651,12 +721,8 @@ class Policy:
                 pass
         return None
 
-    def _rollout_kos(self, i, rest, need) -> bool:
-        """Does taking option i end our turn having knocked something out?"""
-        try:
-            end = self._rollout(i, rest, need)
-        except Exception:
-            return False
+    def _is_ko(self, end) -> bool:
+        """Did this line end our turn having knocked something out?"""
         a = end.observation.current
         if a is None:
             return False
