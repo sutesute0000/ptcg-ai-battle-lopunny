@@ -140,6 +140,86 @@ def get_card(obs, area, index, player_index):
     return None
 
 
+# Consensus decklists per archetype, from winning lists on the 2026-08-02
+# ladder (tools/emit_meta_decks.py). Used to give the opponent a real deck
+# when simulating their reply — a placeholder deck makes them harmless and
+# the whole 2-ply read worthless.
+META_DECKS = [
+    # alakazam_strong
+    [
+     5,5,13,19,19,19,19,66,66,140,305,305,305,343,741,
+     741,741,741,742,742,742,742,743,743,743,743,1079,1079,1079,1081,
+     1081,1081,1081,1086,1086,1086,1086,1097,1129,1152,1152,1152,1152,1182,1182,
+     1182,1184,1197,1197,1197,1225,1225,1225,1225,1231,1231,1231,1231,1266,1266,],
+    # cynthia_s_garchomp_ex
+    [
+     6,6,6,6,6,20,20,20,20,341,341,341,341,342,342,
+     342,379,379,379,379,380,380,380,380,381,381,381,387,387,1080,
+     1086,1086,1086,1086,1097,1097,1142,1142,1142,1142,1152,1152,1152,1152,1173,
+     1173,1173,1182,1182,1197,1203,1225,1225,1225,1227,1227,1227,1227,1261,1261,],
+    # dragapult_strong
+    [
+     2,2,2,2,5,5,5,5,119,119,119,119,120,120,120,
+     120,121,121,121,140,184,235,235,1071,1079,1079,1080,1086,1086,1086,
+     1086,1097,1097,1120,1120,1120,1120,1121,1121,1121,1121,1152,1152,1152,1156,
+     1182,1182,1182,1198,1198,1198,1198,1210,1210,1227,1227,1227,1227,1256,1256,],
+    # marnie_s_grimmsnarl_ex
+    [
+     7,7,7,7,7,7,7,7,7,7,104,104,112,112,112,
+     112,646,646,646,646,647,647,647,648,648,648,860,860,1079,1079,
+     1079,1080,1086,1086,1086,1086,1097,1097,1097,1122,1137,1152,1152,1152,1152,
+     1182,1182,1219,1219,1219,1219,1227,1227,1227,1227,1231,1259,1259,1259,1259,],
+    # mega_kangaskhan_ex
+    [
+     1,1,11,11,11,11,14,14,14,14,18,18,18,18,20,
+     20,117,344,344,344,344,345,345,345,756,756,1086,1086,1121,1121,
+     1122,1122,1122,1122,1123,1137,1147,1147,1147,1147,1159,1182,1182,1182,1182,
+     1194,1194,1197,1219,1219,1219,1219,1225,1225,1227,1227,1227,1227,1257,1264,],
+    # mega_lopunny_ex
+    [
+     3,3,3,11,11,11,11,13,66,66,66,174,305,305,305,
+     305,848,848,849,849,860,860,861,861,1086,1086,1086,1086,1087,1087,
+     1087,1121,1121,1121,1121,1122,1122,1152,1152,1152,1152,1174,1174,1174,1182,
+     1182,1225,1225,1225,1227,1227,1227,1227,1229,1229,1229,1229,1264,1264,1264,],
+    # mega_lucario_ex
+    [
+     6,6,6,6,6,6,6,6,6,6,6,6,6,673,673,
+     674,674,675,675,676,676,676,677,677,677,678,678,678,678,1121,
+     1121,1121,1121,1123,1123,1141,1141,1141,1141,1142,1142,1142,1142,1152,1152,
+     1152,1152,1159,1182,1182,1213,1213,1213,1213,1227,1227,1227,1227,1229,1229,],
+    # mega_venusaur_ex
+    [
+     1,1,1,1,1,1,1,1,1,1,1,13,96,96,96,
+     96,650,650,651,651,652,652,708,708,708,709,709,710,710,756,
+     756,1094,1094,1094,1094,1118,1122,1122,1123,1145,1145,1152,1152,1182,1194,
+     1194,1197,1225,1225,1225,1229,1229,1229,1229,1231,1231,1261,1261,1261,1261,],
+    # rillaboom
+    [
+     1,1,1,1,1,42,73,74,89,89,89,89,90,90,90,
+     91,93,93,93,93,100,100,149,149,149,240,343,1086,1086,1086,
+     1086,1092,1094,1094,1094,1097,1097,1152,1152,1152,1152,1174,1174,1175,1175,
+     1182,1182,1184,1191,1211,1227,1227,1227,1227,1231,1231,1245,1245,1245,1245,],
+    # teal_mask_ogerpon_ex
+    [
+     1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+     1,1,1,18,18,96,96,96,96,1094,1094,1094,1094,1118,1118,
+     1119,1119,1119,1119,1122,1122,1122,1127,1127,1137,1147,1147,1159,1182,1182,
+     1182,1201,1213,1213,1213,1213,1221,1223,1223,1227,1227,1227,1227,1251,1251,],
+    # team_rocket_s_mewtwo_ex
+    [
+     1,1,1,1,1,1,1,15,15,15,15,400,400,400,400,
+     401,401,401,401,414,414,431,431,434,434,434,1080,1086,1094,1094,
+     1094,1121,1121,1134,1134,1134,1134,1152,1152,1152,1152,1216,1216,1216,1216,
+     1218,1218,1218,1220,1220,1220,1220,1227,1227,1227,1227,1264,1264,1264,1264,],
+    # thwackey
+    [
+     1,1,1,1,1,1,1,89,89,89,89,90,90,90,90,
+     92,92,92,92,93,93,93,93,140,1080,1086,1086,1086,1086,1094,
+     1094,1094,1094,1097,1097,1097,1122,1122,1122,1122,1129,1137,1152,1152,1152,
+     1152,1175,1175,1175,1197,1227,1227,1227,1227,1231,1231,1245,1245,1245,1245,],
+]
+
+
 # --- learned position evaluation -------------------------------------------
 # Fitted by tools/train_eval.py on 400 real Mega Lopunny games from the
 # 2026-08-03 ladder: board features -> did this player go on to win.
@@ -152,6 +232,63 @@ def get_card(obs, area, index, player_index):
 EVAL_W = [1.9558, -0.1514, 0.3810, 0.4566, -0.5502, 0.6255,
           -0.8267, 0.5977, -0.5509, 0.6553, -0.0458, 0.0768]
 EVAL_B = 0.1649
+
+
+CARDS = {c.cardId: c for c in all_card_data()}
+
+
+def opp_best_damage(state, mi):
+    """Highest damage the opponent's board can put on our Active next turn.
+
+    A full 2-ply search would need their decklist, their hand and a stand-in
+    for their policy. The question that actually decides our turns is cheaper
+    than all of that: can they knock our Active out on the reply? We hand back
+    3 prizes when the Mega ex dies, so that trade is the one worth reading.
+
+    Energy-aware (they get one attachment), weakness-doubled, and with a case
+    for attacks that place counters per card in hand — printed damage reads 0
+    for those, which is exactly how Alakazam's 300 hides.
+    """
+    me, opp = state.players[mi], state.players[1 - mi]
+    my_active = me.active[0] if me.active else None
+    if my_active is None:
+        return 0
+    mc = CARDS.get(my_active.id)
+    weak = getattr(mc, 'weakness', None) if mc else None
+    best = 0
+    board = [x for x in (opp.active or []) if x is not None] + list(opp.bench or [])
+    active_serial = (opp.active[0].serial
+                     if opp.active and opp.active[0] is not None else None)
+    for p in board:
+        c = CARDS.get(p.id)
+        if c is None:
+            continue
+        avail = len(p.energies or []) + 1          # one attachment per turn
+        for aid in (c.attacks or []):
+            a = ATTACKS.get(aid)
+            if a is None or len(a.energies or []) > avail:
+                continue
+            d = a.damage or 0
+            text = (a.text or '').lower()
+            if not d and 'damage counter' in text and 'each card in your hand' in text:
+                d = 20 * opp.handCount             # 2 counters per card
+            if weak is not None and getattr(c, 'energyType', None) == weak:
+                d *= 2
+            if p.serial != active_serial:
+                d = int(d * 0.7)                   # they must promote it first
+            best = max(best, d)
+    return best
+
+
+def _prize_value(poke):
+    c = CARDS.get(poke.id) if poke is not None else None
+    if c is None:
+        return 1
+    if getattr(c, 'megaEx', False):
+        return 3
+    if getattr(c, 'ex', False):
+        return 2
+    return 1
 
 
 def eval_features(state, mi):
@@ -192,6 +329,14 @@ def position_value(state, mi) -> float:
 # that. _IN_ROLLOUT stops the rollout's own decisions from recursing.
 TIME_BUDGET_S = 200.0
 LEARNED_MARGIN = 0.25
+OPP_REPLY_STEPS = 30      # cap on how far we drive the opponent's turn
+# Simulating the opponent's reply only pays where their deck is exactly known.
+# Measured twice against the 08-02 field: the mirror gains +10 and +11 points,
+# everything else is a wash or slightly worse (the archetype matcher and the
+# damage-greedy stand-in pilot both add error). In the mirror there is no
+# matching to get wrong — their list is our list — and their threat is the one
+# we understand best, a 230 Gale Thrust. So the reply is read there and only
+# there.
 _spent = [0.0]
 _IN_ROLLOUT = [False]
 
@@ -651,28 +796,116 @@ class Policy:
         v -= 40000.0 * len(my_before - my_after)
         return v
 
-    def _rollout(self, i, rest, need):
-        """Take option i, then finish the turn with the static policy."""
+    def _opp_unseen(self):
+        """Guess the opponent's deck+prizes+hand from the archetype they show.
+
+        We cannot see their list, but the field is a handful of known builds.
+        Score each against the cards they have revealed and take the best
+        match; return None when nothing fits, so the caller can fall back to a
+        one-ply read rather than simulate a reply out of a fictional deck.
+        """
+        seen = Counter()
+        p = self.opp
+        for c in (p.discard or []):
+            seen[c.id] += 1
+        for poke in self._board(p):
+            seen[poke.id] += 1
+            for c in ((poke.energyCards or []) + (poke.tools or [])
+                      + (poke.preEvolution or [])):
+                seen[c.id] += 1
+        if not seen:
+            return None
+        best, best_hit = None, 0
+        for deck in META_DECKS:
+            have = Counter(deck)
+            hit = sum(min(n, have[cid]) for cid, n in seen.items())
+            if hit > best_hit:
+                best, best_hit = deck, hit
+        # demand that most of what they have shown is explained by the build
+        if best is None or best_hit < 0.6 * sum(seen.values()):
+            return None
+        have = Counter(best)
+        rest = []
+        for cid, n in have.items():
+            rest += [cid] * max(0, n - seen[cid])
+        need = p.deckCount + len(p.prize) + p.handCount
+        if len(rest) < need:
+            return None
+        return rest[:need]
+
+    def _opp_pick(self, o):
+        """Drive the opponent's turn: take the biggest hit available.
+
+        A crude stand-in, deliberately. We only need their reply accurate
+        enough to answer 'does our Active survive', and a damage-greedy pilot
+        answers that while a fully-featured one would cost far more to build
+        than the question is worth.
+        """
+        sel = o.select
+        opts = sel.option
+
+        def rank(op):
+            if op.type == OptionType.ATTACK:
+                a = ATTACKS.get(op.attackId)
+                return 10000 + ((a.damage or 0) if a else 0)
+            if op.type == OptionType.END:
+                return -100
+            if op.type in (OptionType.ATTACH, OptionType.EVOLVE):
+                return 900
+            if op.type in (OptionType.ABILITY, OptionType.PLAY):
+                return 500
+            if op.type == OptionType.RETREAT:
+                return 100
+            return 300
+
+        order = sorted(range(len(opts)), key=lambda i: -rank(opts[i]))
+        k = max(sel.minCount, min(1, sel.maxCount)) or sel.minCount
+        return order[:k] if k else list(range(sel.minCount))
+
+    def _rollout(self, i, rest, need, reply=False):
+        """Take option i, finish our turn with the static policy, and — when
+        `reply` — let the opponent take their whole turn as well, so the state
+        we score is the one we actually have to survive."""
+        opp_cards = self._opp_unseen() if reply else None
+        if reply and opp_cards is None:
+            reply = False
+        if reply:
+            n_deck, n_prize = self.opp.deckCount, len(self.opp.prize)
+            opp_deck = opp_cards[:n_deck]
+            opp_prize = opp_cards[n_deck:n_deck + n_prize]
+            opp_hand = opp_cards[n_deck + n_prize:]
+        else:
+            opp_deck = [1] * self.opp.deckCount
+            opp_prize = [1] * len(self.opp.prize)
+            opp_hand = [1] * self.opp.handCount
         s = search_begin(
             self.obs,
             your_deck=rest[:self.me.deckCount],
             your_prize=rest[self.me.deckCount:need],
-            opponent_deck=[1] * self.opp.deckCount,
-            opponent_prize=[1] * len(self.opp.prize),
-            opponent_hand=[1] * self.opp.handCount,
+            opponent_deck=opp_deck,
+            opponent_prize=opp_prize,
+            opponent_hand=opp_hand,
             opponent_active=[],
         )
         cur = search_step(s.searchId, [i])
-        for _ in range(40):
+        our_turn_end = None
+        for _ in range(40 + (OPP_REPLY_STEPS if reply else 0)):
             o = cur.observation
             if o.select is None or o.current is None:
                 break
             if o.current.result != -1:
                 break
             if o.current.yourIndex != self.me_i:
-                break                        # our turn is over
+                if not reply:
+                    break                    # our turn is over
+                if our_turn_end is None:
+                    our_turn_end = cur       # remember the pre-reply board
+                cur = search_step(cur.searchId, self._opp_pick(o))
+                continue
+            if our_turn_end is not None:
+                break                        # their reply is done
             cur = search_step(cur.searchId, Policy(o).choose())
-        return cur
+        return cur if not reply else (our_turn_end or cur, cur)
 
     def _lookahead_main(self, opts, static_best):
         """Use the simulator only for what it judges without ambiguity: which
@@ -694,12 +927,18 @@ class Policy:
             kills, values = [], {}
             for i in range(len(opts)):
                 try:
-                    end = self._rollout(i, rest, need)
+                    out = self._rollout(i, rest, need, reply=self.facing_mirror())
                 except Exception:
                     continue
-                if self._is_ko(end):
+                if isinstance(out, tuple):
+                    # 2-ply: judge the knockout on OUR turn, but score the
+                    # position we are left holding after their reply.
+                    ours, after_reply = out
+                else:
+                    ours = after_reply = out
+                if self._is_ko(ours):
                     kills.append(i)
-                a = end.observation.current
+                a = after_reply.observation.current
                 if a is not None:
                     values[i] = position_value(a, self.me_i)
             if static_best in kills or not kills:
