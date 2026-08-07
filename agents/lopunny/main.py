@@ -383,6 +383,52 @@ class Policy:
     def opt_card(self, o):
         return get_card(self.obs, o.area, o.index, o.playerIndex)
 
+    def _lethal_at(self, poke, energy_count):
+        """Could `poke` knock out the opponent's Active with `energy_count`?"""
+        if poke is None:
+            return False
+        oa = self.opp.active[0] if self.opp.active else None
+        if oa is None:
+            return False
+        c = CARDS.get(poke.id)
+        for aid in ((c.attacks if c else None) or []):
+            a = ATTACKS.get(aid)
+            if a is None or len(a.energies or []) > energy_count:
+                continue
+            dmg = a.damage or 0
+            if a.name == 'Gale Thrust' and self.st.retreated:
+                dmg += 170
+            if dmg >= oa.hp:
+                return True
+        return False
+
+    def can_ko_now(self):
+        return self._lethal_at(self.active, len(self.active.energies or [])
+                               if self.active else 0)
+
+    def second_energy_kills(self):
+        """Would one more energy on the Active turn it into a knockout?
+
+        Our energy discipline spreads exactly one energy per Lopunny, which
+        maximises the number of 230 attackers but can never pay for Spiky
+        Hopper (2 energy, 160, and its damage ignores effects on their
+        Active). Against the Alakazam line — Abra 50, Kadabra 80, Alakazam
+        140 — 160 kills everything that matters without needing the retreat
+        loop at all, and top pilots use it 75 times in 40 games where we
+        essentially never do.
+        """
+        if self.active is None or self.st.energyAttached:
+            return False
+        if self.fueled_bench_lopunny():
+            # The retreat loop is available and 230 kills anything 160 would.
+            # Taking the energy for a second attack on the Active instead would
+            # buy the same knockout at the cost of next turn's attacker — which
+            # is what made this rule cost 4 points against Grimmsnarl and 7
+            # against Ogerpon when it fired unconditionally.
+            return False
+        n = len(self.active.energies or [])
+        return not self._lethal_at(self.active, n) and self._lethal_at(self.active, n + 1)
+
     # --- per-context scoring -------------------------------------------
     def score_main(self, o) -> float:
         t = o.type
@@ -429,6 +475,11 @@ class Policy:
             s = 0.0
             active_fueled = (self.active is not None
                              and self.active.id == LOPUNNY and self.active.energies)
+            if (is_active_tgt and self.active is not None
+                    and tgt.serial == self.active.serial
+                    and self.second_energy_kills()):
+                # topping the Active up converts this turn into a knockout
+                return 9200
             if tgt.id == LOPUNNY and not tgt.energies:
                 if is_active_tgt:
                     s = 8600
