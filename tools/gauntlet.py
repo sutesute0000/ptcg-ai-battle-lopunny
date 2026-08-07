@@ -23,16 +23,22 @@ per = int(sys.argv[2]) if len(sys.argv) > 2 else 30
 # Ogerpon fell 23.6%->13.2% while Mega Lucario went 0.1%->4.1%, and a field
 # list that omits the decks currently beating us reads far too high.
 FIELD = {
-    'marnie_s_grimmsnarl_ex': 0.395,
-    'mega_lopunny_ex': 0.158,
-    'teal_mask_ogerpon_ex': 0.132,
-    'mega_kangaskhan_ex': 0.116,
-    'alakazam_strong': 0.077,
-    'cynthia_s_garchomp_ex': 0.044,     # Fighting — hits our x2 weakness
-    'mega_lucario_ex': 0.041,           # Fighting, 75% WR, the fastest riser
-    'dragapult_strong': 0.027,          # bespoke pilot, not GenericPolicy
-    'team_rocket_s_mewtwo_ex': 0.009,
+    'marnie_s_grimmsnarl_ex': 0.335,
+    'mega_lopunny_ex': 0.157,
+    'alakazam_strong': 0.146,           # 7.7% -> 14.6% in four days
+    'mega_kangaskhan_ex': 0.115,
+    'teal_mask_ogerpon_ex': 0.089,
+    'dragapult_strong': 0.078,          # 2.7% -> 7.8%, and our worst matchup
+    'mega_lucario_ex': 0.023,           # 63% WR; our bot for it reads far too weak
+    'thwackey': 0.015,
+    'cynthia_s_garchomp_ex': 0.008,
 }
+
+# Real top-tier matchup rates for our deck on 2026-08-06, for calibration:
+#   Grimmsnarl 57%, Alakazam 48%, Kangaskhan 72%, Ogerpon 61%,
+#   Dragapult 44%, Lucario 14%, Thwackey 78%.
+# The Alakazam bot tracks reality well (46-50% local vs 48% real). The Lucario
+# bot does not (73-83% local vs 14% real) — treat that column as meaningless.
 
 from kaggle_environments import make  # noqa: E402
 
