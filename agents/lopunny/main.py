@@ -329,6 +329,15 @@ def position_value(state, mi) -> float:
 # that. _IN_ROLLOUT stops the rollout's own decisions from recursing.
 TIME_BUDGET_S = 200.0
 LEARNED_MARGIN = 0.25
+# v7's second-energy rule read +2.3 points locally and then lost 160 Elo on the
+# ladder against the v6 it replaced. Off while we re-test the base.
+SPIKY_HOPPER_LINE = False
+LOOKAHEAD_CONTEXTS = frozenset({
+    SelectContext.TO_HAND,      # search targets — 51% agreement with top pilots
+    SelectContext.SWITCH,       # which attacker the retreat brings up
+    SelectContext.TO_ACTIVE,    # the forced promotion after a knockout
+    SelectContext.TO_BENCH,
+})
 OPP_REPLY_STEPS = 30      # cap on how far we drive the opponent's turn
 # Simulating the opponent's reply only pays where their deck is exactly known.
 # Measured twice against the 08-02 field: the mirror gains +10 and +11 points,
@@ -475,7 +484,7 @@ class Policy:
             s = 0.0
             active_fueled = (self.active is not None
                              and self.active.id == LOPUNNY and self.active.energies)
-            if (is_active_tgt and self.active is not None
+            if (SPIKY_HOPPER_LINE and is_active_tgt and self.active is not None
                     and tgt.serial == self.active.serial
                     and self.second_energy_kills()):
                 # topping the Active up converts this turn into a knockout
@@ -958,6 +967,37 @@ class Policy:
             cur = search_step(cur.searchId, Policy(o).choose())
         return cur if not reply else (our_turn_end or cur, cur)
 
+    def _lookahead_pick(self, static_best, n):
+        """Same machinery as the MAIN lookahead, for a single-pick context."""
+        rest = self._unseen_own_cards()
+        need = self.me.deckCount + len(self.me.prize)
+        if len(rest) < need:
+            return None
+        _IN_ROLLOUT[0] = True
+        try:
+            values = {}
+            for i in range(n):
+                try:
+                    end = self._rollout(i, rest, need)
+                except Exception:
+                    continue
+                a = end.observation.current
+                if a is not None:
+                    values[i] = position_value(a, self.me_i)
+            if static_best not in values:
+                return None
+            best = max(values, key=values.get)
+            if (best != static_best
+                    and values[best] - values[static_best] > LEARNED_MARGIN):
+                return [best]
+        finally:
+            _IN_ROLLOUT[0] = False
+            try:
+                search_end()
+            except Exception:
+                pass
+        return None
+
     def _lookahead_main(self, opts, static_best):
         """Use the simulator only for what it judges without ambiguity: which
         first actions actually end the turn with a knockout.
@@ -1090,6 +1130,21 @@ class Policy:
 
         scored = sorted(range(n), key=lambda i: -ranker(opts[i]))
         if ctx == SelectContext.MAIN or sel.maxCount == 1:
+            if (ctx in LOOKAHEAD_CONTEXTS and n > 1 and not _IN_ROLLOUT[0]
+                    and getattr(self.obs, 'search_begin_input', None)
+                    and _spent[0] < TIME_BUDGET_S):
+                # Every decision outside MAIN was still decided by hand-written
+                # scores, and those are the contexts we agree with top pilots
+                # least (TO_HAND 51%, DISCARD 21%). The simulator is available
+                # here too, so rank them the way MAIN is ranked.
+                t0 = time.time()
+                try:
+                    picked = self._lookahead_pick(scored[0], n)
+                except Exception:
+                    picked = None
+                _spent[0] += time.time() - t0
+                if picked is not None:
+                    return picked
             return [scored[0]]
         # multi-pick: take options while they look worthwhile, at least minCount
         picks = []
