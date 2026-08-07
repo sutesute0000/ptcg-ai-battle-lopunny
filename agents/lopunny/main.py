@@ -332,6 +332,10 @@ LEARNED_MARGIN = 0.25
 # v7's second-energy rule read +2.3 points locally and then lost 160 Elo on the
 # ladder against the v6 it replaced. Off while we re-test the base.
 SPIKY_HOPPER_LINE = False
+LOOKAHEAD_MULTI = frozenset({
+    SelectContext.DISCARD,                      # 4-21% agreement, the worst
+    SelectContext.DISCARD_CARD_OR_ATTACHED_CARD,
+})
 LOOKAHEAD_CONTEXTS = frozenset({
     SelectContext.TO_HAND,      # search targets — 51% agreement with top pilots
     SelectContext.SWITCH,       # which attacker the retreat brings up
@@ -947,7 +951,7 @@ class Policy:
             opponent_hand=opp_hand,
             opponent_active=[],
         )
-        cur = search_step(s.searchId, [i])
+        cur = search_step(s.searchId, i if isinstance(i, list) else [i])
         our_turn_end = None
         for _ in range(40 + (OPP_REPLY_STEPS if reply else 0)):
             o = cur.observation
@@ -966,6 +970,53 @@ class Policy:
                 break                        # their reply is done
             cur = search_step(cur.searchId, Policy(o).choose())
         return cur if not reply else (our_turn_end or cur, cur)
+
+    def _lookahead_set(self, static_pick, n):
+        """Multi-pick version: keep the static set unless swapping one card out
+        for one we passed over measurably improves the position.
+
+        DISCARD is the context we agree with top pilots on least (4-21%), and
+        it was left out of the single-pick extension because it asks for two
+        cards at once. Enumerating every pair is unnecessary — the static set
+        is a good starting point, so only its single-swap neighbours are tried,
+        which is a dozen rollouts rather than dozens.
+        """
+        rest = self._unseen_own_cards()
+        need = self.me.deckCount + len(self.me.prize)
+        if len(rest) < need:
+            return None
+        chosen = list(static_pick)
+        others = [i for i in range(n) if i not in chosen]
+        if not others or not chosen:
+            return None
+        _IN_ROLLOUT[0] = True
+        try:
+            base = self._rollout_set_value(chosen, rest, need)
+            if base is None:
+                return None
+            best, best_v = None, base
+            for pos in range(len(chosen)):
+                for alt in others:
+                    cand = list(chosen)
+                    cand[pos] = alt
+                    v = self._rollout_set_value(cand, rest, need)
+                    if v is not None and v > best_v + LEARNED_MARGIN:
+                        best, best_v = cand, v
+            return best
+        finally:
+            _IN_ROLLOUT[0] = False
+            try:
+                search_end()
+            except Exception:
+                pass
+
+    def _rollout_set_value(self, picks, rest, need):
+        try:
+            end = self._rollout(picks, rest, need)
+        except Exception:
+            return None
+        a = end.observation.current
+        return position_value(a, self.me_i) if a is not None else None
 
     def _lookahead_pick(self, static_best, n):
         """Same machinery as the MAIN lookahead, for a single-pick context."""
@@ -1153,7 +1204,20 @@ class Policy:
                 break
             if len(picks) < sel.minCount or ranker(opts[i]) > 0:
                 picks.append(i)
-        return picks if len(picks) >= sel.minCount else scored[: sel.minCount]
+        if len(picks) < sel.minCount:
+            picks = scored[: sel.minCount]
+        if (ctx in LOOKAHEAD_MULTI and len(picks) < n and not _IN_ROLLOUT[0]
+                and getattr(self.obs, 'search_begin_input', None)
+                and _spent[0] < TIME_BUDGET_S):
+            t0 = time.time()
+            try:
+                better = self._lookahead_set(picks, n)
+            except Exception:
+                better = None
+            _spent[0] += time.time() - t0
+            if better is not None:
+                return better
+        return picks
 
 
 def _legal_fallback(obs: Observation) -> list[int]:
