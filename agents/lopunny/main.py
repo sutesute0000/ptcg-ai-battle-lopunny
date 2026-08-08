@@ -5,8 +5,40 @@ Gale Thrust (1 colorless, 60 + 170 when the attacker moved from bench to
 active this turn) every turn, cycling attackers via free retreat (Air
 Balloon) and healing with Wally's Compassion.
 
-Every selection scores each legal option and returns the best; on any
-error a legal fallback is returned so the agent never crashes.
+Every selection scores each legal option and returns the best; on any error a
+legal fallback is returned so the agent never crashes.
+
+--- how a decision is made, and why it is split this way -------------------
+
+Three layers, in descending order of how much we trust them. The order is not
+a design preference; it is what the ladder paid for.
+
+1. STATIC SCORES. Each context has a ranker whose numbers were derived by
+   replaying top pilots' real games and tuning until our picks matched theirs.
+   This is the default and it is deliberately hard to overrule.
+
+2. VERIFIED KNOCKOUTS. The engine ships a forward simulator, so before
+   settling on a MAIN action we play each candidate out to the end of the
+   turn and ask one question with no judgement in it: does this line knock
+   something out? If the static pick misses a kill another line finds, we take
+   the kill. A line that ends the game outright is taken immediately.
+   Because rollout draws are random and the verdict flips on ~3% of
+   candidates, the question is asked three times and settled by majority.
+
+3. LEARNED EVALUATION. When no kill is on offer, candidates are ranked by a
+   logistic model fitted to real games (board features -> did this player
+   win; test accuracy 0.707 against a 0.593 baseline). It may override the
+   static pick only past a margin, because a 70%-accurate model does not get
+   a coin-flip veto over scores tuned against real play.
+
+The boundary between 2 and 3 is the whole lesson of this project. Every change
+that supplied an exact fact or fixed a real defect gained ground on the ladder
+(+150 for the search, +72 for the learned eval plus a targeting bug). Every
+change that widened the model's discretion lost 120-170, even when local
+sparring said it was 2-4 points better. Local bots are far weaker than the
+field — ours reads the Lucario matchup at 73-83% where the real number is 14%
+— so they forgive judgement errors the ladder punishes. See docs/plan.md for
+the full ledger of what was tried and rejected.
 """
 import os
 
@@ -697,8 +729,14 @@ class Policy:
                     end = self._rollout(i, rest, need)
                 except Exception:
                     continue
-                if self._is_ko(end):
+                if self._ko_is_reliable(i, rest, need, end):
                     kills.append(i)
+                if self._wins(end):
+                    # Taking the last prize ends the game. That is the one
+                    # fact worth more than any ranking, and it was being
+                    # folded in with ordinary knockouts and then re-sorted by
+                    # a 70.7%-accurate model, which could pass it over.
+                    return [i]
                 a = end.observation.current
                 if a is not None:
                     values[i] = position_value(a, self.me_i)
@@ -720,6 +758,32 @@ class Policy:
             except Exception:
                 pass
         return None
+
+    def _ko_is_reliable(self, i, rest, need, first) -> bool:
+        """Is the knockout real, or did one lucky shuffle produce it?
+
+        Card draws inside the rollout are random, and the verdict flips on
+        about 3% of candidates when the same line is played out three times.
+        A single sample therefore promises knockouts we cannot actually make
+        and hides ones we can. Two more samples and a majority vote cost three
+        rollouts (~3s of a 600s budget) and settle it.
+
+        This reduces variance on a check that is already exact; it does not
+        hand the model any more discretion, which is what every change that
+        lost ground on the ladder had in common.
+        """
+        votes = [self._is_ko(first)]
+        for _ in range(2):
+            try:
+                votes.append(self._is_ko(self._rollout(i, rest, need)))
+            except Exception:
+                pass
+        return sum(votes) * 2 > len(votes)
+
+    def _wins(self, end) -> bool:
+        """Does this line finish the game in our favour this turn?"""
+        a = end.observation.current
+        return a is not None and a.result == self.me_i
 
     def _is_ko(self, end) -> bool:
         """Did this line end our turn having knocked something out?"""
